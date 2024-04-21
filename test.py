@@ -6,6 +6,8 @@ import time
 import certifi
 from urllib import robotparser
 import numpy as np
+import subprocess
+import os
 
 def can_scrape(url):
     rp = robotparser.RobotFileParser()
@@ -14,21 +16,23 @@ def can_scrape(url):
     try:
         # Try decoding with multiple encodings until one succeeds
         for encoding in ['utf-8', 'latin-1']:
+            #reads the web pages' robots.txt file and checks if it can be scraped
             response = requests.get(url + '/robots.txt')
             response.raise_for_status()
             rp.parse(response.content.decode(encoding).splitlines())
             return rp.can_fetch("*", url)
     except Exception as e:
-        print(f"Error reading robots.txt for {url}: {e}")
-        return False  # Assume scraping is allowed if there is an issue reading the file
+       # print(f"Error reading robots.txt for {url}: {e}")
+        return False  # Assume scraping is not allowed if there is an issue reading the file
 
 
 
     #return rp.can_fetch("*", url)
 
 
-def scrape_links(url, depth=1):
-    if depth == 0 or not can_scrape(url):  
+def scrape_links(url):
+    
+    if not can_scrape(url):  
         return []
 
     try:
@@ -45,6 +49,7 @@ def scrape_links(url, depth=1):
 def create_graph(start_url, depth):
     G = nx.Graph()
     visited = set()
+    max_edges = 400
 
     def recursive_scrape(current_url, current_depth):
         if current_depth > depth or current_url in visited or not can_scrape(current_url):
@@ -61,7 +66,9 @@ def create_graph(start_url, depth):
                 G[current_url][link]['weight'] += 1
             else:
                 # Add a new edge with weight 1
-                G.add_edge(current_url, link, weight=1)
+                G.add_edge(current_url, link, weight=1) 
+                if G.number_of_edges() >= max_edges:
+                    return
             recursive_scrape(link, current_depth + 1)
 
     recursive_scrape(start_url, 0)
@@ -86,9 +93,9 @@ def visualize_graph(graph):
    plt.title("Matrix")
    
    save_adjacency_matrix(graph,"file.txt")
-   model = dtmc("file")
-   print(model)
-   np.savetxt("model.txt", model, fmt='%.6f', delimiter=' ', encoding='utf-8')
+   model = dtmc("file.txt")
+   #print(model)
+   np.savetxt("model.txt", model, fmt='%.7f', delimiter=' ', encoding='utf-8')
    
    
    #plt.show()
@@ -97,29 +104,69 @@ def save_adjacency_matrix(graph, filename):
     adjacency_matrix = nx.to_numpy_array(graph)
 
     # Save the adjacency matrix as a text file
-    np.savetxt(filename, adjacency_matrix, fmt='%d', delimiter=',', encoding='utf-8')
+    np.savetxt(filename, adjacency_matrix, fmt='%d', delimiter=' ', encoding='utf-8')
 
     print(f"Adjacency matrix saved to {filename}")
 
 def dtmc(file):
     # Read adjacency matrix from the text file
-    adjacency_matrix = np.loadtxt(file, dtype=int)
+    try:
+        # Read adjacency matrix from the text file
+        adjacency_matrix = np.loadtxt(file, dtype=int)
 
-    # Normalize rows to convert link counts to transition probabilities
-    transition_matrix = adjacency_matrix.astype(float)
-    row_sums = transition_matrix.sum(axis=1)
-    for i in range(len(row_sums)):
-        if row_sums[i] > 0:
-            transition_matrix[i] /= row_sums[i]
+        # Normalize rows to convert link counts to transition probabilities
+        transition_matrix = adjacency_matrix.astype(float)
+        row_sums = transition_matrix.sum(axis=1)
+        for i in range(len(row_sums)):
+            if row_sums[i] > 0:
+                transition_matrix[i] /= row_sums[i]
 
-    return transition_matrix
+        return transition_matrix
+    except Exception as e:
+        print("Error:", e)
+        return None
 
+def runvmp():
+    current_directory = os.getcwd()
+    executable_path = os.path.join(current_directory, 'vmp.exec')
+    
+    out = subprocess.run([executable_path, 'model.txt'],stdout=subprocess.PIPE, stderr=subprocess.PIPE, text = True)
+    with open("out.txt",'w') as file:
+        file.write(out.stdout)
+    with open("error.txt", 'w') as file:
+        file.write(out.stderr)
 
+    
+def read_probabilities_from_file(filename):
+    probabilities = []
+    with open(filename, 'r') as file:
+        for line in file:
+            probabilities.append([float(prob) for prob in line.strip().split(';')])
+    return probabilities
+
+def sort_links_by_probability(probabilities, url_mapping):
+    # Create a dictionary mapping URLs to probabilities
+    url_probability_map = {url_mapping[i]: prob for i, prob in enumerate(probabilities[0], start=1)}
+
+    # Sort the URLs based on their probabilities
+   #sorted_urls = sorted(url_probability_map, key=lambda url: url_probability_map[url], reverse=True)
+    sorted_urls = sorted(url_probability_map.items(), key=lambda item: item[1], reverse=True)
+
+    return sorted_urls
 
 
 if __name__ == "__main__":
-    start_url = "https://www.aston.ac.uk/"  # Replace with the URL you want to start from
-    depth = 3  # Set the desired depth
+    #start_url = "https://www.aston.ac.uk/"  # Replace with the URL you want to start from
+    start_url = input("Please enter the URL you wish to get a ranking for (including the https)")
+    while start_url[:5] != "https":
+        start_url = input("Please enter a valid URL")
+    depth = 5  # Set the desired depth
     graph = create_graph(start_url, depth)
     visualize_graph(graph)
-    
+    runvmp()
+    url_mapping = dict(enumerate(graph.edges(), start=1))
+    probabilities = read_probabilities_from_file("out.txt")
+    sorted_links = sort_links_by_probability(probabilities, url_mapping)
+    print("Sorted URLs by probability:")
+    for url, probability in sorted_links[:10]:
+        print(f"URL: {url}, Probability: {probability:.3f} \n")
