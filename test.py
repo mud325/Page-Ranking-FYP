@@ -37,6 +37,7 @@ def scrape_links(url):
 
     try:
         #response = requests.get(url,verify=certifi.where())
+        #creates user agent so requests don't get denied
         response = requests.get(url, headers={'User-Agent': 'test'})
         soup = BeautifulSoup(response.text, 'html.parser')
         links = [a['href'] for a in soup.find_all('a', href=True) if a['href'].startswith('http')]
@@ -54,7 +55,7 @@ def create_graph(start_url, depth):
     def recursive_scrape(current_url, current_depth):
         if current_depth > depth or current_url in visited or not can_scrape(current_url):
             return
-
+        #tracks if url is already visited
         visited.add(current_url)
         links = scrape_links(current_url)
 
@@ -74,11 +75,11 @@ def create_graph(start_url, depth):
     recursive_scrape(start_url, 0)
     return G
 
-def visualize_graph(graph):
+def save_model(graph):
    """  pos = nx.spring_layout(graph)
     nx.draw(graph, pos, with_labels=True, font_weight='bold', node_size=50)
     plt.show() """
-   node_labels = {i: node for i, node in enumerate(graph.nodes())}
+   """ node_labels = {i: node for i, node in enumerate(graph.nodes())}
    plt.xticks(np.arange(len(node_labels)), [node_labels[i] for i in range(len(node_labels))], rotation='vertical')
    plt.yticks(np.arange(len(node_labels)), [node_labels[i] for i in range(len(node_labels))])
    adjacency_matrix = nx.to_numpy_array(graph)
@@ -90,7 +91,7 @@ def visualize_graph(graph):
    
    fig = plt.gcf()
    fig.set_size_inches(15,10)
-   plt.title("Matrix")
+   plt.title("Matrix") """
    
    save_adjacency_matrix(graph,"file.txt")
    model = dtmc("file.txt")
@@ -116,6 +117,7 @@ def dtmc(file):
 
         # Normalize rows to convert link counts to transition probabilities
         transition_matrix = adjacency_matrix.astype(float)
+        #sums up rows to 1
         row_sums = transition_matrix.sum(axis=1)
         for i in range(len(row_sums)):
             if row_sums[i] > 0:
@@ -127,16 +129,18 @@ def dtmc(file):
         return None
 
 def runvmp():
+    #gets current directory and path
     current_directory = os.getcwd()
     executable_path = os.path.join(current_directory, 'vmp.exec')
-    
+    #runs vmp.exec as a subprocess
     out = subprocess.run([executable_path, 'model.txt'],stdout=subprocess.PIPE, stderr=subprocess.PIPE, text = True)
+    #writes output to file
     with open("out.txt",'w') as file:
         file.write(out.stdout)
     with open("error.txt", 'w') as file:
         file.write(out.stderr)
 
-    
+    #opens file, reads all the probabilities and returns it as a list
 def read_probabilities_from_file(filename):
     probabilities = []
     with open(filename, 'r') as file:
@@ -145,11 +149,12 @@ def read_probabilities_from_file(filename):
     return probabilities
 
 def sort_links_by_probability(probabilities, url_mapping):
-    # Create a dictionary mapping URLs to probabilities
+    # Create a dictionary mapping URLs from graph  to probabilities
+    
     url_probability_map = {url_mapping[i]: prob for i, prob in enumerate(probabilities[0], start=1)}
 
     # Sort the URLs based on their probabilities
-   #sorted_urls = sorted(url_probability_map, key=lambda url: url_probability_map[url], reverse=True)
+   
     sorted_urls = sorted(url_probability_map.items(), key=lambda item: item[1], reverse=True)
 
     return sorted_urls
@@ -158,15 +163,19 @@ def sort_links_by_probability(probabilities, url_mapping):
 if __name__ == "__main__":
     #start_url = "https://www.aston.ac.uk/"  # Replace with the URL you want to start from
     start_url = input("Please enter the URL you wish to get a ranking for (including the https)")
+    #validates URL to see if it starts with https
     while start_url[:5] != "https":
         start_url = input("Please enter a valid URL")
     depth = 5  # Set the desired depth
     graph = create_graph(start_url, depth)
-    visualize_graph(graph)
+    save_model(graph)
     runvmp()
+    #dictionary mapping graph edges
     url_mapping = dict(enumerate(graph.edges(), start=1))
     probabilities = read_probabilities_from_file("out.txt")
     sorted_links = sort_links_by_probability(probabilities, url_mapping)
     print("Sorted URLs by probability:")
+    #Prints the top 10 URLs and their probabilities
     for url, probability in sorted_links[:10]:
         print(f"URL: {url}, Probability: {probability:.3f} \n")
+    input()
